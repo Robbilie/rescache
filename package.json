@@ -20,7 +20,7 @@
     "jest": "^22.4.2"
   },
   "dependencies": {
-    "marshalutil": "https://github.com/Robbilie/marshalutil",
+    "marshalutil": "https://github.com/Robbilie/marshalutil#3eda83e",
     "js-yaml": "^3.11.0",
     "request": "^2.85.0",
     "request-promise-native": "^1.0.5"
