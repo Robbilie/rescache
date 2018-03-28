@@ -8,63 +8,90 @@ const yaml = require("js-yaml");
 
 const { MarshalStream } = require("marshalutil");
 
-const storage = {
-	resIndexFile: "index_tq.txt",
-	resFile: "resfileindex.txt",
-	resDir: path.join(__dirname, "..", "res"),
-	baseUrl: "http://res.eveonline.ccpgames.com",
+const defaults = {
 	binariesUrl: "http://binaries.eveonline.com",
+	resfileUrl: "http://res.eveonline.ccpgames.com",
+	resDir: path.join(__dirname, "..", "res"),
 };
 
-try { fs.mkdirSync(storage.resDir) } catch (e) {}
-
-// TODO: init based build version, modular index
+try { fs.mkdirSync(defaults.resDir) } catch (e) {}
 
 class ResCache {
 
-	static getMap () {
-		if (!storage.map)
-			storage.map = new Map(
-				[].concat(...[[storage.resIndexFile, storage.binariesUrl], [storage.resFile, storage.baseUrl]].map(([file, url]) => fs
-					.readFileSync(path.join(__dirname, "..", file))
-					.toString()
-					.split("\n")
-					.map(line => {
-						let [k, v] = line.split(",").slice(0, 2);
-						return [k, [v, url]];
-					})
-				))
-			);
-		return storage.map;
+	constructor (buildVersion) {
+		this.map = new Map([
+			["app:/index.txt", [`eveonline_${buildVersion}.txt`, defaults.binariesUrl]],
+		]);
 	}
 
-	static async getByPath (pth) {
-		const [fullPath, url] = ResCache.getMap().get(pth.toLowerCase());
-		const localPath = fullPath.split("/");
-		console.log(pth, localPath);
-		if (!fs.existsSync(path.join(storage.resDir, ...localPath))) {
-			try { fs.mkdirSync(path.join(storage.resDir, localPath[0])) } catch (e) {}
-			const data = await req({ url: `${url}/${localPath.join("/")}`,  gzip: true, encoding: null });
+	async init () {
+		const index = await this.getByPath("app:/index.txt");
+		this.fillMap(
+			this.parseIndex(index),
+			defaults.binariesUrl,
+		);
+		const resfileindex = await this.getByPath("app:/resfileindex.txt");
+		this.fillMap(
+			this.parseIndex(resfileindex),
+			defaults.resfileUrl,
+		);
+	}
+
+	fillMap (lines, url) {
+		lines.forEach(([name, path]) => {
+			this.map.set(name, [path, url]);
+		});
+	}
+
+	parseIndex (data) {
+		return data
+			.toString()
+			.split("\n")
+			.map(line => line.split(","));
+	}
+
+	async getByPath (pth) {
+		const [fullPath, url] = this.map.get(pth.toLowerCase());
+		const splitPath = fullPath.split("/");
+		const localPath = path.join(defaults.resDir, ...splitPath);
+		if (!fs.existsSync(localPath)) {
+			if (splitPath.length > 1) {
+				try {
+					fs.mkdirSync(path.join(defaults.resDir, splitPath[0]));
+				} catch (e) {}
+			}
+			const data = await req({ 
+				url: `${url}/${fullPath}`,
+				gzip: true,
+				encoding: null,
+			});
 			fs.writeFileSync(
-				path.join(storage.resDir, ...localPath), 
+				localPath, 
 				data,
 			);
 			return data;
 		}
-		return fs.readFileSync(path.join(storage.resDir, ...localPath));
+		return fs.readFileSync(localPath);
 	}
 
-	static getPathsByExtension (ext) {
-		return Array.from(ResCache.getMap()).map(([path]) => path.toLowerCase()).filter(path => path.endsWith(`.${ext}`));
+	getPathsByExtension (ext) {
+		return Array
+			.from(this.map)
+			.map(([path]) => path.toLowerCase())
+			.filter(path => path.endsWith(`.${ext}`));
 	}
 
-	static async loadYaml (pth) {
-		const data = (await ResCache.getByPath(pth)).toString();
-		return yaml.safeLoad(data.replace(new RegExp("!!python/tuple", "g"), ""));
+	async loadYaml (pth) {
+		const data = await this.getByPath(pth);
+		const yamlStr = data
+			.toString()
+			.replace(new RegExp("!!python/tuple", "g"), "");
+		return yaml.safeLoad(yamlStr);
 	}
 
-	static async loadBulk (bulkID) {
-		return new MarshalStream(await ResCache.getByPath(`app:/bulkdata/${bulkID}.cache2`)).value;
+	async loadBulk (bulkID) {
+		const data = await this.getByPath(`app:/bulkdata/${bulkID}.cache2`);
+		return new MarshalStream(data).value;
 	}
 
 }
